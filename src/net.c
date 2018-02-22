@@ -113,15 +113,13 @@ net_resolve(net_t * net) {
 }
 
 void
-net_resolve_cb(uv_getaddrinfo_t *rv, int stat, net_ai * ai) {
+net_resolve_cb(uv_getaddrinfo_t *rv, int err, net_ai * ai) {
   net_t * net = (net_t*) rv->data;
-  err_t err;
-  socketPair_t dest;
   char addr[INET6_ADDRSTRLEN];
   int ret;
+  struct sockaddr_in dest;
 
-  if (stat != 0) {
-    err = uv_last_error(net->loop);
+  if (err != 0) {
     if (net->error_cb) {
       net->error_cb(net, err, (char *) uv_strerror(err));
     } else {
@@ -132,17 +130,26 @@ net_resolve_cb(uv_getaddrinfo_t *rv, int stat, net_ai * ai) {
   }
 
   uv_ip4_name((socketPair_t *) ai->ai_addr, addr, INET6_ADDRSTRLEN);
-  dest = uv_ip4_addr(addr, net->port);
+  ret = uv_ip4_addr(addr, net->port, &dest);
+
+  if (ret != 0) {
+    if (net->error_cb) {
+      net->error_cb(net, ret, (char *) uv_strerror(err));
+    } else {
+      printf("error(%s:%d) %s", net->hostname, net->port, (char *) uv_strerror(err));
+      net_free(net);
+    }
+    return;
+  }
 
   /*
    * create tcp instance.
    */
   uv_tcp_init(net->loop, net->handle);
-  ret = uv_tcp_connect(net->conn, net->handle, dest, net_connect_cb);
+  ret = uv_tcp_connect(net->conn, net->handle, (const struct sockaddr*) &dest, net_connect_cb);
   if (ret != NET_OK) {
-    err = uv_last_error(net->loop);
     if (net->error_cb) {
-      net->error_cb(net, err, (char *) uv_strerror(err));
+      net->error_cb(net, ret, (char *) uv_strerror(err));
     } else {
       printf("error(%s:%d) %s", net->hostname, net->port, (char *) uv_strerror(err));
       net_free(net);
@@ -157,13 +164,11 @@ net_resolve_cb(uv_getaddrinfo_t *rv, int stat, net_ai * ai) {
 }
 
 void
-net_connect_cb(uv_connect_t *conn, int stat) {
+net_connect_cb(uv_connect_t *conn, int err) {
   net_t * net = (net_t *) conn->data;
-  err_t err;
   int read;
 
-  if (stat < 0) {
-    err = uv_last_error(net->loop);
+  if (err < 0) {
     if (net->error_cb) {
       net->error_cb(net, err, (char *) uv_strerror(err));
     } else {
@@ -211,24 +216,21 @@ net_connect_cb(uv_connect_t *conn, int stat) {
   }
 }
 
-uv_buf_t
-net_alloc(uv_handle_t* handle, size_t size) {
-  char * base = (char *) calloc(size, 1);
-  return uv_buf_init(base, size);
+void
+net_alloc(uv_handle_t* handle, size_t size, uv_buf_t* buf) {
+  buf->base = (char *) calloc(size, 1);
+  buf->len = size;
 }
 
 void
-net_read(uv_stream_t *handle, ssize_t nread, const uv_buf_t buf) {
-
+net_read(uv_stream_t* handle, ssize_t nread, const uv_buf_t* buf) {
   net_t * net = (net_t *) handle->data;
-  err_t err;
 
   if (nread < 0) {
-    err = uv_last_error(net->loop);
     if (net->error_cb) {
-      net->error_cb(net, err, (char *) uv_strerror(err));
+      net->error_cb(net, nread, (char *) uv_strerror(nread));
     } else {
-      printf("error(%s:%d) %s", net->hostname, net->port, (char *) uv_strerror(err));
+      printf("error(%s:%d) %s", net->hostname, net->port, (char *) uv_strerror(nread));
       net_free(net);
     }
     return;
@@ -242,8 +244,8 @@ net_read(uv_stream_t *handle, ssize_t nread, const uv_buf_t buf) {
    * return value is -2 then the operation is not implemented in the specific BIO type.
    */
   if (net->use_ssl) {
-    tls_bio_write(net->tls, buf.base, nread);
-    free(buf.base);
+    tls_bio_write(net->tls, buf->base, nread);
+    free(buf->base);
 
     int read = 0;
     int stat = tls_read(net->tls);
@@ -296,10 +298,10 @@ net_read(uv_stream_t *handle, ssize_t nread, const uv_buf_t buf) {
    * TCP Part, no SSL, just proxy of uv.
    */
   uv_read_stop(handle);
-  buf.base[nread] = 0;
+  buf->base[nread] = 0;
   if (net->read_cb != NULL) {
-    net->read_cb(net, nread, buf.base);
-    free(buf.base);
+    net->read_cb(net, nread, buf->base);
+    free(buf->base);
   }
 }
 
@@ -370,6 +372,6 @@ net_set_error_cb(net_t * net, void * cb) {
 
 void
 net_write_cb(uv_write_t *req, int stat) {
-  free(req);
   net_resume((net_t*)req->data);
+  free(req);
 }

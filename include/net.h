@@ -18,7 +18,6 @@
 typedef struct net_s net_t;
 typedef struct addrinfo net_ai;
 typedef struct sockaddr_in socketPair_t;
-typedef uv_err_t err_t;
 
 #define NET_FIELDS                    \
   NET_CONNECTION_FIELDS               \
@@ -50,7 +49,7 @@ struct net_s {
   void  *data;
   void (*conn_cb)(net_t*);
   void (*read_cb)(net_t*, size_t, char*);
-  void (*error_cb)(net_t*, err_t, char*);
+  void (*error_cb)(net_t*, int, char*);
   void (*close_cb)(uv_handle_t*);
 };
 
@@ -111,14 +110,14 @@ net_connect_cb(uv_connect_t *conn, int stat);
 /*
  * realloc buffer before you read
  */
-uv_buf_t
-net_alloc(uv_handle_t* handle, size_t size);
+void
+net_alloc(uv_handle_t* handle, size_t size, uv_buf_t* buf);
 
 /*
  * read buffer
  */
 void
-net_read(uv_stream_t *handle, ssize_t nread, const uv_buf_t buf);
+net_read(uv_stream_t* handle, ssize_t nread, const uv_buf_t* buf);
 
 /*
  * write buffer
